@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" type="text/css" href="https://dc-js.github.io/dc.js/css/dc.css" />
+    <script src="https://dc-js.github.io/dc.js/js/d3.js"></script>
+    <script src="https://dc-js.github.io/dc.js/js/crossfilter.js"></script>
+    <script src="https://dc-js.github.io/dc.js/js/dc.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/reductio/0.6.3/reductio.js"></script>
+    <script src="https://npmcdn.com/universe@latest/universe.js"></script>
+    <style>
+    </style>
+</head>
+
+<body>
+    <div id="main-chart"></div>
+    <div id="dependent-selector"></div>
+    <div id="text-search"></div>
+    <script>
+        var chart = dc.barChart("#main-chart");
+        d3.csv("data.csv", function(error, rawTable) {
+            var meanAccessor = function(d) { return d.value.sum / d.value.count; };
+            var countAccessor = function(d) { return d.value.count; };
+            var sumAccessor = function(d) { return d.value.sum; };
+
+            var likelyNumeric = function(table, key) {
+                var samples = table.map(function(d) { return +d[key]; });
+                for (var i = 0; i < samples.length; i++) {
+                    if (isNaN(samples[i])) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            var reduceOnKey = function(dim, key) {
+                return dim.group().reduce(
+                    function(p, v) { 
+                        p.count += 1; p.sum += +v[key]; return p; },
+                    function(p, v) { 
+                        p.count -= 1; p.sum -= +v[key]; return p; },
+                    function() { 
+                        var p = {}; p.count = 0; p.sum = 0; return p; });
+            };
+
+            var reduceOnKeySubstring = function(dim, key, sub) {
+                return dim.group().reduce(
+                    function(p, v) { 
+                        p.count += 1; 
+                        p.sum += v[key].indexOf(sub) == -1 ? 0 : 1; 
+                        return p; 
+                    }, function(p, v) { 
+                        p.count -= 1; 
+                        p.sum -= v[key].indexOf(sub) == -1 ? 0 : 1; 
+                        return p; 
+                    }, function() {
+                        var p = {}; p.count = 0; p.sum = 0; return p; 
+                    }
+                );
+            };
+
+            var independentAxis = function(table, chart, key) {
+                var dim = table.dimension(function(d) { return +d[key]; });
+                var hi = +dim.top(1)[0][key] + 1;
+                var lo = +dim.bottom(1)[0][key];
+                chart.x(d3.scale.linear().domain([lo, hi]));
+                chart.xAxisLabel(key);
+                chart.xAxis().tickFormat(d3.format("d"));
+                chart.dimension(dim);
+                return dim;
+            }
+
+            var dependentAxis = function(dim, chart, key, sub) {
+                sub = sub || "";
+
+                var group;
+                if (likelyNumeric(rawTable, key)) {
+                    group = reduceOnKey(dim, key);
+                } else {
+                    group = reduceOnKeySubstring(dim, key, sub);
+                }
+
+                var all = group.all().map(meanAccessor);
+                chart.y(d3.scale.linear().domain([0, d3.max(all)]));
+                chart.yAxisLabel(key).group(group);
+                chart.render();
+            }
+
+            chart.width(768)
+                 .height(480)
+                 .margins({top: 50, right: 50, bottom: 50, left: 50})
+                 .brushOn(false)
+                 .valueAccessor(meanAccessor);
+
+            var cfTable = crossfilter(rawTable);
+            var indepDim = independentAxis(cfTable, chart, "Year");
+
+            var keys = Object.keys(rawTable[0]);
+            var sel = document.createElement("select");
+            document.getElementById("dependent-selector").appendChild(sel);
+            for (var k = 0; k < keys.length; k++) {
+                var key = keys[k];
+                sel.options[sel.options.length] = new Option(key, key);
+            }
+            sel.options[0].selected = true;
+
+            sel.addEventListener("change", function() {
+                dependentAxis(indepDim, chart, this.value);
+            });
+
+            var textBox = document.createElement("input");
+            document.getElementById("text-search").appendChild(textBox);
+            textBox.addEventListener("change", function() {
+                dependentAxis(
+                    indepDim, 
+                    chart, 
+                    sel.options[sel.selectedIndex].value,
+                    this.value
+                );
+            });
+
+            //dependentAxis(indepDim, chart, "68 prison crime prisoners");
+            //dependentAxis(indepDim, chart, "25 music rock band");
+            dependentAxis(indepDim, chart, keys[0]);
+        });
+
+    </script>
+</body>
+
