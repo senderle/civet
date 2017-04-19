@@ -7,20 +7,61 @@
     <script src="https://dc-js.github.io/dc.js/js/dc.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/reductio/0.6.3/reductio.js"></script>
     <script src="https://npmcdn.com/universe@latest/universe.js"></script>
+    <script src="https://cdn.jsdelivr.net/lodash/4.17.4/lodash.min.js"></script>
+    <script src="stopwords.js"></script>
     <style>
+        div {
+            float: left;
+            clear: both;
+            padding: 5px 5px 5px 5px;
+        }
+
+        div.disabled {
+            opacity: 0.2;
+        }
     </style>
 </head>
 
 <body>
     <div id="main-chart"></div>
-    <div id="dependent-selector"></div>
-    <div id="text-search"></div>
+    <div><span>Select a column: </span><span id="dependent-selector"></span></div>
+    <div id="text-search-options">
+        <div>Search for a keyword in the selected column.</div>
+        <div id="text-search"></div>
+        <div>Hints: <span id="search-hints"></span></div>
+    </div>
     <script>
         var chart = dc.barChart("#main-chart");
         d3.csv("data.csv", function(error, rawTable) {
             var meanAccessor = function(d) { return d.value.sum / d.value.count; };
             var countAccessor = function(d) { return d.value.count; };
             var sumAccessor = function(d) { return d.value.sum; };
+
+            var dateFormat = d3.time.format("%Y-%m-%d");
+            var monthFormat = d3.time.format("%Y-%m");
+            var yearFormat = d3.time.format("%Y");
+            // for (var i = 0; i < rawTable.length; i++) {
+            //     var row = rawTable[i];
+            //     row.Timestamp = dateFormat.parse(row["Start Date"]);
+            //     row.Month = d3.time.month(row.Timestamp);
+            // }
+
+            var topKeywords = function(table, key) {
+                var col = table.map(function(d) { return d[key]; });
+                col = _.flatMap(col, function(d) { return d.split(" "); });
+                col = _.filter(col, function(d) { return !stopwordList.hasOwnProperty(d.toLowerCase()); } );
+                words = _.countBy(col, function(d) { 
+                    return d.toLowerCase()
+                            .replace('.', '')
+                            .replace(',', '')
+                            .replace('-', '');
+                });
+
+                return _.sortBy(
+                    Object.keys(words), 
+                    function(d) { return -words[d]; }
+                );
+            };
 
             var likelyNumeric = function(table, key) {
                 var samples = table.map(function(d) { return +d[key]; });
@@ -30,7 +71,7 @@
                     }
                 }
                 return true;
-            }
+            };
 
             var reduceOnKey = function(dim, key) {
                 return dim.group().reduce(
@@ -46,11 +87,11 @@
                 return dim.group().reduce(
                     function(p, v) { 
                         p.count += 1; 
-                        p.sum += v[key].indexOf(sub) == -1 ? 0 : 1; 
+                        p.sum += v[key].toLowerCase().indexOf(sub) == -1 ? 0 : 1; 
                         return p; 
                     }, function(p, v) { 
                         p.count -= 1; 
-                        p.sum -= v[key].indexOf(sub) == -1 ? 0 : 1; 
+                        p.sum -= v[key].toLowerCase().indexOf(sub) == -1 ? 0 : 1; 
                         return p; 
                     }, function() {
                         var p = {}; p.count = 0; p.sum = 0; return p; 
@@ -59,15 +100,23 @@
             };
 
             var independentAxis = function(table, chart, key) {
-                var dim = table.dimension(function(d) { return +d[key]; });
-                var hi = +dim.top(1)[0][key] + 1;
-                var lo = +dim.bottom(1)[0][key];
-                chart.x(d3.scale.linear().domain([lo, hi]));
+                var dim = table.dimension(function(d) { return d[key]; });
+                var hi = dim.top(1)[0][key];
+                var lo = dim.bottom(1)[0][key];
+                
+                if (likelyNumeric(rawTable, key)) {
+                    chart.x(d3.scale.linear().domain([lo, hi]));
+                    chart.xAxis().tickFormat(d3.format('d'));
+                } else {
+                    chart.x(d3.scale.ordinal());
+                    chart.xUnits(dc.units.ordinal);
+                    chart.xAxis().tickFormat(function(d) { return yearFormat(new Date(d)); } );
+                }
+
                 chart.xAxisLabel(key);
-                chart.xAxis().tickFormat(d3.format("d"));
                 chart.dimension(dim);
                 return dim;
-            }
+            };
 
             var dependentAxis = function(dim, chart, key, sub) {
                 sub = sub || "";
@@ -75,35 +124,51 @@
                 var group;
                 if (likelyNumeric(rawTable, key)) {
                     group = reduceOnKey(dim, key);
+                    document.getElementById("text-search-options").classList.add("disabled");
                 } else {
                     group = reduceOnKeySubstring(dim, key, sub);
+                    document.getElementById("text-search-options").classList.remove("disabled");
+                    var hints = topKeywords(rawTable, key).slice(0, 10);
+                    hints = hints.join("\", \"");
+                    hints = "\"" + hints + "\""
+                    var hintText = document.createTextNode(hints);
+                    var hintParent = document.getElementById("search-hints");
+                    while (hintParent.firstChild) {
+                        hintParent.removeChild(hintParent.firstChild);
+                    }
+                    hintParent.appendChild(hintText);
                 }
 
-                var all = group.all().map(meanAccessor);
+                var all = group.all().map(sumAccessor);
                 chart.y(d3.scale.linear().domain([0, d3.max(all)]));
                 chart.yAxisLabel(key).group(group);
                 chart.render();
-            }
+            };
+
+            var attachDropdown = function(elid, opts, onchange) {
+                var sel = document.createElement("select");
+                document.getElementById(elid).appendChild(sel); 
+                for (var k = 0; k < opts.length; k++) {
+                    var opt = opts[k];
+                    sel.options[sel.options.length] = new Option(opt, opt);
+                }
+                sel.options[4].selected = true;
+
+                sel.addEventListener("change", onchange);
+                return sel;
+            };
 
             chart.width(768)
                  .height(480)
                  .margins({top: 50, right: 50, bottom: 50, left: 50})
                  .brushOn(false)
-                 .valueAccessor(meanAccessor);
+                 .valueAccessor(sumAccessor);
 
             var cfTable = crossfilter(rawTable);
             var indepDim = independentAxis(cfTable, chart, "Year");
 
             var keys = Object.keys(rawTable[0]);
-            var sel = document.createElement("select");
-            document.getElementById("dependent-selector").appendChild(sel);
-            for (var k = 0; k < keys.length; k++) {
-                var key = keys[k];
-                sel.options[sel.options.length] = new Option(key, key);
-            }
-            sel.options[0].selected = true;
-
-            sel.addEventListener("change", function() {
+            var sel = attachDropdown("dependent-selector", keys, function() {
                 dependentAxis(indepDim, chart, this.value);
             });
 
@@ -114,13 +179,11 @@
                     indepDim, 
                     chart, 
                     sel.options[sel.selectedIndex].value,
-                    this.value
+                    this.value.toLowerCase()
                 );
             });
 
-            //dependentAxis(indepDim, chart, "68 prison crime prisoners");
-            //dependentAxis(indepDim, chart, "25 music rock band");
-            dependentAxis(indepDim, chart, keys[0]);
+            dependentAxis(indepDim, chart, keys[4]);
         });
 
     </script>
