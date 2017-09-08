@@ -79,7 +79,7 @@
                     group = reduceOnKeySubstring(dim, key, sub);
                 }
 
-                var all = group.all().map(meanAccessor);
+                var all = group.all().map(sumAccessor);
                 chart.y(d3.scale.linear().domain([0, d3.max(all)]));
                 chart.yAxisLabel(key).group(group);
                 chart.render();
@@ -89,10 +89,10 @@
                  .height(480)
                  .margins({top: 50, right: 50, bottom: 50, left: 50})
                  .brushOn(false)
-                 .valueAccessor(meanAccessor);
+                 .valueAccessor(countAccessor);
 
             var cfTable = crossfilter(rawTable);
-            var indepDim = independentAxis(cfTable, chart, "Year");
+            var indepDim = independentAxis(cfTable, chart, "SCRIPT_SECTION");
 
             var keys = Object.keys(rawTable[0]);
             var sel = document.createElement("select");
